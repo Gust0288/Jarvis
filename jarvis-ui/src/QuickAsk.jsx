@@ -1,11 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 
-/* ============================================================
-   QUICK ASK — Spotlight-style overlay, summoned anywhere with
-   ⌥Space (global shortcut registered in electron/main.js).
-   Exchanges are written to localStorage so the main HUD can
-   drain them on load / focus and show a unified conversation log.
-   ============================================================ */
+// Quick Ask overlay.
 
 const SERVER_URL = "http://127.0.0.1:7077";
 const mono = "'Share Tech Mono', monospace";
@@ -13,7 +8,7 @@ const display = "'Orbitron', sans-serif";
 const CYAN = "#35D6F0";
 const TEXT = "#D8F4FA";
 
-/* ── Inline markdown: **bold** and `code` ── */
+// Inline markdown.
 function renderInline(text) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
   if (parts.length === 1) return text;
@@ -29,7 +24,7 @@ function renderInline(text) {
   });
 }
 
-/* ── Full block renderer (mirrors App.jsx MessageText) ── */
+// Message renderer.
 function MessageText({ text }) {
   const blocks = text.split(/\n{2,}/);
   return (
@@ -101,7 +96,7 @@ function MessageText({ text }) {
   );
 }
 
-/* ── localStorage sync helpers ── */
+// Log sync.
 const LS_KEY = "jarvis-quick-log";
 
 function appendToLog(entry) {
@@ -245,8 +240,6 @@ export default function QuickAsk() {
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
         @keyframes quickPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
       `}</style>
-
-      {/* Input row */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 20px" }}>
         <span
           style={{
@@ -284,8 +277,6 @@ export default function QuickAsk() {
           ESC
         </span>
       </div>
-
-      {/* Pending write-action confirmation */}
       {pendingAction && (
         <div
           style={{
@@ -306,8 +297,6 @@ export default function QuickAsk() {
           </div>
         </div>
       )}
-
-      {/* Answer / error */}
       {(reply || error) && !pendingAction && (
         <div
           style={{

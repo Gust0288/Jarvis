@@ -14,7 +14,7 @@ let quickWin = null;
 let tray = null;
 let isQuitting = false;
 
-/* ---------- Quick-ask overlay (global ⌥Space, Spotlight-style) ---------- */
+// Quick-ask overlay (global ⌥Space, Spotlight-style)
 const QUICK_WIDTH = 680;
 const QUICK_SHORTCUT = 'Alt+Space';
 
@@ -85,7 +85,7 @@ ipcMain.on('quick-resize', (_event, contentHeight) => {
   quickWin.setBounds({ x: wx, y: wy, width: QUICK_WIDTH, height: h });
 });
 
-/* ---------- Global push-to-talk: hold ⌥V anywhere, release to send ---------- */
+// Global push-to-talk: hold ⌥V anywhere, release to send
 /* Uses uiohook-napi for system-wide key down/up events (Electron's
    globalShortcut has no key-release event, so it can't do hold-to-talk).
    Requires Input Monitoring permission on macOS:

@@ -1,19 +1,4 @@
-/* ============================================================
-   JARVIS LOCAL TOOL SERVER
-   ------------------------------------------------------------
-   The "hands" of your JARVIS. Runs on YOUR Mac, localhost only.
-   - Talks to Ollama (the brain) with tool-calling enabled
-   - Exposes exactly two write-tools: add_calendar_event, add_note
-   - NEVER executes a write without explicit confirmation from
-     the UI (two-step: /chat returns a pendingAction, the user
-     confirms in the HUD, then /confirm executes it)
-
-   Requirements: Node 18+, Ollama running with a tool-capable
-   model (qwen3.5 supports tools).
-
-   Run:  node jarvis-server.mjs
-   Env:  JARVIS_MODEL=qwen3.5:9b  CALENDAR_NAME="Hjem"  PORT=7077
-   ============================================================ */
+// Local JARVIS tool server. Writes require UI confirmation.
 
 import http from "node:http";
 import fs from "node:fs";
@@ -22,24 +7,16 @@ import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 
 const PORT = Number(process.env.PORT || 7077);
-const HOST = "127.0.0.1"; // localhost ONLY — never 0.0.0.0
+const HOST = "127.0.0.1"; // localhost only
 const OLLAMA = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
-let MODEL = process.env.JARVIS_MODEL || "qwen3.5:9b"; // mutable — hot-swappable via POST /model
-// Calendar to write events into. Leave empty to auto-pick the first
-// writable calendar (avoids read-only subscribed ones like Birthdays,
-// and works regardless of how macOS localizes default calendar names).
+let MODEL = process.env.JARVIS_MODEL || "qwen3.5:9b"; // hot-swappable
+// Empty means auto-pick a writable calendar.
 const CALENDAR_NAME = process.env.CALENDAR_NAME || "";
 
-// Optional: set TAVILY_API_KEY env var for much better web search results.
-// Free tier at https://tavily.com — 1 000 searches/month, no credit card needed.
-// Without it, search falls back to DuckDuckGo + Wikipedia (still works, narrower coverage).
+// Optional. Falls back to DuckDuckGo/Wikipedia.
 const TAVILY_KEY = process.env.TAVILY_API_KEY || "";
 
-// Inference settings applied to every Ollama call.
-// think: true  — enables qwen3's silent chain-of-thought reasoning on final answers
-// temperature  — lower = more focused, less hallucination
-// num_ctx      — context window; covers ~6 k words of conversation history
-// repeat_penalty — discourages rambling repetition
+// Ollama inference defaults.
 const MODEL_OPTIONS = { temperature: 0.35, num_ctx: 8192, repeat_penalty: 1.1 };
 const modelSupportsThinking = () => MODEL.startsWith("qwen3");
 
@@ -68,7 +45,7 @@ const PERSONA =
   "to delete one emit [TASK_REMOVE:title] — use the exact title from the list. " +
   "Example: 'Marked as complete, sir. [TASK_DONE:Fix login bug]'";
 
-/* ---------- Tool definitions (what the model is allowed to do) ---------- */
+// Tools exposed to the model.
 const TOOLS = [
   {
     type: "function",
@@ -189,9 +166,9 @@ const TOOLS = [
   },
 ];
 
-/* ---------- AppleScript executors (the ONLY things that touch macOS) ---- */
+// AppleScript executors.
 
-// Strip characters that could break out of AppleScript string literals
+// Escape AppleScript strings.
 const sanitize = (s = "") => String(s).replace(/[\\"]/g, "").slice(0, 2000);
 
 function runAppleScript(script) {
@@ -203,11 +180,7 @@ function runAppleScript(script) {
   });
 }
 
-/* ---------- Generic app-category resolution ----------
-   "open my email" should open the user's mail client, not fail looking for
-   an app literally named "my email". Categories with a `scheme` are resolved
-   through LaunchServices so the user's actual default app is used; an env
-   override (e.g. JARVIS_EMAIL_APP="Microsoft Outlook") always wins. */
+// Resolve app categories like "email" or "browser".
 const APP_ALIASES = {
   email:    { scheme: "mailto", fallback: "Mail",            env: "JARVIS_EMAIL_APP" },
   mail:     { scheme: "mailto", fallback: "Mail",            env: "JARVIS_EMAIL_APP" },
@@ -229,7 +202,7 @@ const APP_ALIASES = {
   calculator: {                 fallback: "Calculator" },
 };
 
-// Ask LaunchServices which bundle handles a URL scheme (mailto/http).
+// Default app for URL scheme.
 function lsDefaultBundle(scheme) {
   return new Promise((resolve) => {
     execFile("defaults",
@@ -244,7 +217,7 @@ function lsDefaultBundle(scheme) {
   });
 }
 
-// Spotlight fuzzy match: "photoshop" → /Applications/Adobe Photoshop 2025.app
+// Fuzzy app match.
 function fuzzyFindApp(query) {
   const q = query.replace(/["\\]/g, "");
   return new Promise((resolve) => {
@@ -255,13 +228,13 @@ function fuzzyFindApp(query) {
         const apps = out.trim().split("\n").filter(p =>
           /^\/(System\/)?Applications\//.test(p) || p.startsWith(path.join(os.homedir(), "Applications") + "/"));
         if (!apps.length) return resolve(null);
-        apps.sort((a, b) => a.length - b.length); // shortest path ≈ closest match
+        apps.sort((a, b) => a.length - b.length); // closest path
         resolve(apps[0]);
       });
   });
 }
 
-// Bundle id → .app path, so replies can name the real app ("Microsoft Outlook").
+// Bundle id to app path.
 function appPathForBundle(bundleId) {
   return new Promise((resolve) => {
     execFile("mdfind", [`kMDItemCFBundleIdentifier == "${bundleId.replace(/["\\]/g, "")}"c`],
@@ -271,7 +244,7 @@ function appPathForBundle(bundleId) {
   });
 }
 
-// Resolve what the user said into concrete `open` arguments.
+// Resolve app open target.
 async function resolveAppTarget(raw) {
   const key = raw.toLowerCase()
     .replace(/^(my|our|the)\s+/, "")
@@ -308,7 +281,7 @@ async function execOpenApp({ name }) {
   try {
     return await openWith(args, label);
   } catch (firstErr) {
-    // Exact name failed — try a Spotlight fuzzy match before giving up.
+    // Try fuzzy match.
     const found = await fuzzyFindApp(appName);
     if (!found) throw firstErr;
     const niceName = path.basename(found, ".app");
@@ -321,7 +294,7 @@ async function execAddCalendarEvent({ title, startISO, durationMinutes = 60 }) {
   const d = new Date(startISO);
   if (isNaN(d)) throw new Error("Invalid start date");
   const t = sanitize(title);
-  // Build the date from components — avoids locale parsing issues
+  // Avoid locale parsing.
   const script = `
     set startDate to current date
     set year of startDate to ${d.getFullYear()}
@@ -424,9 +397,7 @@ async function execGetWeather({ location = "Copenhagen" }) {
 async function execWebSearch({ query }) {
   const q = sanitize(query);
 
-  // ── Tier 1: Tavily (real web results, AI-optimised) ──────────────────────
-  // Set TAVILY_API_KEY env var to activate. Free tier: 1 000 searches/month.
-  // https://tavily.com — no credit card required for the free plan.
+  // Tavily.
   if (TAVILY_KEY) {
     try {
       const r = await fetch("https://api.tavily.com/search", {
@@ -458,8 +429,7 @@ async function execWebSearch({ query }) {
     }
   }
 
-  // ── Tier 2: DuckDuckGo instant answers ───────────────────────────────────
-  // Fast, but only covers a narrow set of well-defined queries.
+  // DuckDuckGo.
   try {
     const r = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`, {
       headers: { "User-Agent": "JARVIS/1.0" },
@@ -476,8 +446,7 @@ async function execWebSearch({ query }) {
     }
   } catch { /* fall through */ }
 
-  // ── Tier 3: Wikipedia ────────────────────────────────────────────────────
-  // Good factual coverage; misses current events and proprietary content.
+  // Wikipedia.
   const sr = await fetch(
     `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&srlimit=3&format=json`,
     { headers: { "User-Agent": "JARVIS/1.0" } }
@@ -503,7 +472,7 @@ async function execWebSearch({ query }) {
   return `Search results for "${query}" (Wikipedia):\n\n` + lines.join("\n");
 }
 
-/* News RSS feeds — topic → BBC RSS URL */
+// BBC RSS feeds.
 const NEWS_FEEDS = {
   technology: "https://feeds.bbci.co.uk/news/technology/rss.xml",
   business:   "https://feeds.bbci.co.uk/news/business/rss.xml",
@@ -562,15 +531,13 @@ function describeAction(name, args) {
   return `${name}(${JSON.stringify(args)})`;
 }
 
-/* ---------- Pending confirmations (write-gate) ---------- */
+// Pending writes.
 const pending = new Map(); // id -> { toolCall, messages }
 let nextId = 1;
 
-/* ---------- Ollama chat ---------- */
+// Ollama chat.
 async function ollamaChat(messages, withTools = true) {
-  // Disable thinking during tool-calling: the model must emit structured JSON for
-  // tool calls, and chain-of-thought reasoning can corrupt that output format.
-  // Enable it on final-answer calls (withTools=false) where free-form text is fine.
+  // Disable thinking for tool JSON.
   const think = !withTools && modelSupportsThinking();
   const r = await fetch(`${OLLAMA}/api/chat`, {
     method: "POST",
@@ -589,32 +556,27 @@ async function ollamaChat(messages, withTools = true) {
   return data.message;
 }
 
-/* ---------- Wake-word handling ---------- */
+// Wake word.
 
-// Whisper frequently mishears "Jarvis" — accept common phonetic variants at
-// the start of an utterance, with an optional "hey"/"ok" prefix.
+// Accept common "Jarvis" mishearings.
 const WAKE_RE = /^(?:(?:hey|okay|ok|yo)[,\s]+)?(?:jarvis(?:['’]?s)?|jarviss|jarvys|jarvas|jarvus|jarviz|jarbis|jervis|javis|charvis|garvis|harvis|gervais|java['’]?s|jar\s+vis)\b[,!.:;\s]*/i;
 
-// Remove the wake word for intent matching. If the utterance is ONLY the
-// wake word, keep it so the model can respond ("Yes, sir?").
+// Strip wake word for intents.
 function stripWake(text = "") {
   const s = text.replace(WAKE_RE, "");
   return s.trim() ? s : text;
 }
 
-// Canonicalize a misheard wake word in a transcript: "Java's please open X"
-// → "Jarvis, please open X". Used on /transcribe output so the UI displays
-// (and the model receives) the corrected text.
+// Normalize wake word in transcripts.
 function normalizeWake(text = "") {
   if (!WAKE_RE.test(text)) return text;
   return text.replace(WAKE_RE, "Jarvis, ").trim().replace(/^Jarvis,$/, "Jarvis?");
 }
 
-// Bias whisper decoding toward the wake word by priming it with fake prior
-// transcript that uses the name.
+// Bias Whisper toward "Jarvis".
 const WHISPER_PROMPT = "Jarvis, what's the weather? Jarvis, please open Safari. Jarvis, add a task.";
 
-/* ---------- App-open intent (bypasses the model's tool decision) ---------- */
+// App-open intent.
 
 function wantsOpenApp(text = "") {
   return /\b(open|launch|start|run)\b.+/i.test(text);
@@ -625,27 +587,27 @@ function extractAppName(text = "") {
   return m ? m[1].trim() : null;
 }
 
-/* ---------- Note-retrieval intent (bypasses the model's tool decision) ---- */
+// Note-read intent.
 
-// Does the user clearly want to read existing notes?
+// Read existing notes?
 function wantsNotes(text = "") {
   const t = text.toLowerCase();
-  // Must reference notes AND a read-style verb; excludes "add/create a note".
+  // Exclude create-note requests.
   if (!/\bnotes?\b/.test(t)) return false;
   if (/\b(add|create|make|write|new)\b.*\bnote/.test(t)) return false;
   return /\b(show|see|find|read|get|retrieve|list|open|look|view|what|which|any|my)\b/.test(t);
 }
 
-// Pull a search keyword out of phrases like "the note about X" / "my X note".
+// Extract note keyword.
 function extractQuery(text = "") {
   const about = text.match(/notes?\s+(?:about|on|regarding|for|with|containing|that\s+(?:mentions|says|has))\s+(.+)/i);
   if (about) return about[1].replace(/[?.!]+$/, "").trim().slice(0, 60);
   const my = text.match(/\bmy\s+(.+?)\s+notes?\b/i);
   if (my) return my[1].replace(/[?.!]+$/, "").trim().slice(0, 60);
-  return ""; // no keyword → list recent notes
+  return ""; // recent notes
 }
 
-// Run a read tool, then let the model phrase a reply around the results.
+// Run read tool, then phrase reply.
 async function readToolReply(res, messages, toolName, args, fallbackLabel) {
   try {
     const result = await EXECUTORS[toolName](args);
@@ -659,12 +621,12 @@ async function readToolReply(res, messages, toolName, args, fallbackLabel) {
   }
 }
 
-// Run get_notes, then let the model phrase a reply around the results.
+// Run get_notes, then phrase reply.
 async function notesReply(res, messages, args) {
   return readToolReply(res, messages, "get_notes", args, "notes");
 }
 
-/* ---------- Calendar intent helpers ---------- */
+// Calendar intent helpers
 
 function wantsCalendar(text = "") {
   const t = text.toLowerCase();
@@ -683,7 +645,7 @@ function extractCalendarDays(text = "") {
   return 7;
 }
 
-/* ---------- Weather intent helpers ---------- */
+// Weather intent helpers
 
 function wantsWeather(text = "") {
   return /\b(weather|forecast|temperature|temp|rain|sunny|cloudy|wind|humidity|conditions?|hot|cold|warm|degrees?|°)\b/i.test(text);
@@ -697,7 +659,7 @@ function extractWeatherLocation(text = "") {
   return "Copenhagen";
 }
 
-/* ---------- News intent helpers ---------- */
+// News intent helpers
 
 function wantsNews(text = "") {
   return /\b(news|headlines?|what'?s happening|what is happening|current events?|latest|top stories|breaking)\b/i.test(text);
@@ -709,7 +671,7 @@ function extractNewsTopic(text = "") {
   return topics.find(k => t.includes(k)) || "";
 }
 
-/* ---------- Web search intent helpers ---------- */
+// Web search intent helpers
 
 function wantsSearch(text = "") {
   return /\b(look up|look it up|search (for|the web)?|research|find (me|out|the)|what (is|was|are|were)|who (is|was|won|invented|wrote|discovered)|when (is|was|did)|where (is|was)|how (many|much|old|tall|far|long)|tell me about|google)\b/i.test(text);
@@ -723,14 +685,14 @@ function extractSearchQuery(text = "") {
   return text.trim();
 }
 
-/* ---------- Task intent helpers ---------- */
+// Task intent helpers
 
 function wantsTask(text = "") {
   return /\b(add (a |an |this )?task|create (a |an |this )?task|add (to |it to )?(my )?(to.?do|task list)|new task|put .* (on|in) (my )?(to.?do|task)|remind me to|remember to (do )?)\b/i.test(text);
 }
 
 function extractTaskInfo(text = "") {
-  // Strip the intent prefix to get the raw task title
+  // Strip intent prefix.
   let title = text
     .replace(/^add (a |an |this )?task[s]?[,:\s-]+/i, "")
     .replace(/^create (a |an |this )?task[,:\s-]+/i, "")
@@ -740,12 +702,12 @@ function extractTaskInfo(text = "") {
     .replace(/^remember to (do\s+)?/i, "")
     .trim();
 
-  // Detect explicit priority keyword
+  // Detect priority.
   let priority = "medium";
   if (/\b(high|urgent|important|critical)\b/i.test(title)) priority = "high";
   if (/\b(low|minor|whenever|someday)\b/i.test(title)) priority = "low";
 
-  // Strip trailing priority phrase from the title so it reads cleanly
+  // Clean title.
   title = title
     .replace(/[,.]?\s*(high|low|medium|urgent|important|critical|minor)\s+priority\b/i, "")
     .replace(/[,.]?\s*priority[:\s]+(high|low|medium|urgent|important|critical|minor)\b/i, "")
@@ -755,7 +717,7 @@ function extractTaskInfo(text = "") {
   return { title: title || text.trim(), priority };
 }
 
-/* ---------- Local STT via whisper-cpp ---------- */
+// Local STT via whisper-cpp
 const WHISPER_MODEL_PATHS = [
   process.env.WHISPER_MODEL,
   path.join(os.homedir(), ".cache/whisper/ggml-base.en.bin"),
@@ -780,7 +742,7 @@ const run = (bin, args, opts = {}) =>
     execFile(bin, args, { timeout: 60000, ...opts }, (err, stdout) => err ? reject(err) : resolve(stdout))
   );
 
-/* whisper-server: keeps the model in RAM so transcription is fast after the first call */
+// Persistent Whisper server.
 const WHISPER_PORT = Number(process.env.WHISPER_PORT || 8765);
 const WHISPER_SERVER_URL = `http://127.0.0.1:${WHISPER_PORT}`;
 let whisperReady = false;
@@ -796,15 +758,15 @@ let whisperReady = false;
   proc.on("error", e => console.warn("[whisper-server] failed to start:", e.message));
   proc.on("exit", () => { whisperReady = false; });
   process.on("exit", () => proc.kill());
-  // Give it 3s to load the model then mark ready
+  // Mark ready after warmup.
   setTimeout(() => { whisperReady = true; console.log("[whisper-server] ready"); }, 3000);
 })();
 
-/* ---------- HTTP server ---------- */
+// HTTP server
 const json = (res, code, obj) => {
   res.writeHead(code, {
     "Content-Type": "application/json",
-    // CORS: the UI runs on a different localhost port (e.g. Vite :5173)
+    // Local UI CORS.
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, x-audio-format",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
@@ -825,7 +787,7 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
 
   try {
-    /* Health: lets the UI verify server + Ollama + model in one probe */
+    // Health probe.
     if (req.method === "GET" && req.url === "/health") {
       const r = await fetch(`${OLLAMA}/api/tags`);
       const tags = await r.json();
@@ -833,8 +795,7 @@ http.createServer(async (req, res) => {
       return json(res, 200, { ok: hasModel, model: MODEL, tools: Object.keys(EXECUTORS) });
     }
 
-    /* Model: read or hot-swap the active Ollama model — no restart needed.
-       Ollama loads the new model on the next chat (a few seconds the first time). */
+    // Model read/swap.
     if (req.method === "GET" && req.url === "/model") {
       return json(res, 200, { model: MODEL });
     }
@@ -843,7 +804,7 @@ http.createServer(async (req, res) => {
       if (!model || typeof model !== "string") {
         return json(res, 400, { ok: false, error: "model name required" });
       }
-      // Only switch to a model that's actually pulled
+      // Require pulled model.
       const tagsRes = await fetch(`${OLLAMA}/api/tags`);
       const tags = await tagsRes.json();
       const pulled = (tags.models || []).some((m) => m.name.startsWith(model));
@@ -853,24 +814,18 @@ http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, model: MODEL });
     }
 
-    /* Chat: returns either { reply } or { pendingAction } */
+    // Chat endpoint.
     if (req.method === "POST" && req.url === "/chat") {
       const { messages = [] } = await readBody(req);
 
-      // Intent shortcut: small models are unreliable at deciding to call a
-      // read tool, so detect the "show me my notes" intent ourselves and run
-      // get_notes directly — no dependence on the model's tool-calling.
+      // Shortcut note reads.
       const rawLast = [...messages].reverse().find(m => m.role === "user")?.content || "";
-      // The UI may prepend a memory-context block to the user message. Intent
-      // regexes must only see the actual utterance — a memory that mentions
-      // "weather" must not hijack a "open Outlook" command into get_weather.
+      // Ignore memory block for intents.
       const utterance = rawLast.replace(/^JARVIS MEMORY:\n[\s\S]*?\n\n/, "");
-      // Strip wake-word prefix (incl. Whisper mishearings like "Java's") so
-      // intent patterns and extraction regexes work regardless of invocation.
+      // Strip wake word.
       const last = stripWake(utterance).trim() || utterance;
 
-      // Task intent: handle before anything else so the model never gets a chance
-      // to misfire a tool call for something like "add task: set up API"
+      // Handle tasks first.
       if (wantsTask(last)) {
         const { title, priority } = extractTaskInfo(last);
         console.log(`[intent→add_task] "${title}" (${priority})`);
@@ -902,7 +857,7 @@ http.createServer(async (req, res) => {
         console.log(`[intent→open_app]`, appName);
         try {
           const result = await execOpenApp({ name: appName });
-          const opened = result.replace(/^Opened /, ""); // resolved name, e.g. "Microsoft Outlook"
+          const opened = result.replace(/^Opened /, ""); // resolved name
           return json(res, 200, { reply: `[OPEN:${opened}]` }); // silent — no prose
         } catch (e) {
           return json(res, 200, { reply: `I'm afraid I couldn't open ${appName}, sir. ${e.message}` });
@@ -917,9 +872,7 @@ http.createServer(async (req, res) => {
         const args = tc.function?.arguments || {};
         if (!EXECUTORS[name]) return json(res, 200, { reply: "I'm afraid that action is not in my toolkit, sir." });
 
-        // Small models sometimes reach for a personal-data tool to answer a
-        // general question. If the user never mentioned notes/calendar,
-        // reroute the question to web_search instead.
+        // Reroute general questions to search.
         if (
           (name === "get_notes" && !/\bnotes?\b/i.test(last)) ||
           (name === "get_calendar" && !/\b(calendar|schedule|agenda|events?|appointments?|meetings?)\b/i.test(last))
@@ -928,7 +881,7 @@ http.createServer(async (req, res) => {
           return readToolReply(res, messages, "web_search", { query: last }, "search results");
         }
 
-        // Non-destructive tools execute immediately — no confirmation needed
+        // Read-only tools run now.
         if (name === "get_notes") {
           console.log(`[read] ${name}`, args);
           return notesReply(res, messages, args);
@@ -968,8 +921,7 @@ http.createServer(async (req, res) => {
       }
       const replyText = msg.content?.trim();
 
-      // Detect when the model refuses to search ("I can't access the internet",
-      // "I don't have real-time information", etc.) and do the search ourselves.
+      // Search if the model refuses.
       const isRefusal = replyText && /\b(don'?t have (access|information|the ability)|unable to (search|browse|access|retrieve|look up)|can'?t (search|browse|access|look up|provide real.time)|no access to (the )?internet|not able to (search|browse|access)|I cannot (search|browse|access)|requires? (searching|browsing|accessing) the web|through this interface|real.?time (data|information)|my knowledge (is limited|cutoff|doesn'?t)|as of my (last|knowledge)|I'?m not connected)\b/i.test(replyText);
 
       const isQuestion = /\?|^(what|who|when|where|why|how|which|find|tell|is|are|was|were|did|does|can|could)\b/i.test(last);
@@ -981,7 +933,7 @@ http.createServer(async (req, res) => {
       return json(res, 200, { reply: replyText || "I'm sorry sir, I didn't quite catch that. Could you rephrase?" });
     }
 
-    /* Confirm: the user approved — NOW we execute */
+    // Confirm write.
     if (req.method === "POST" && req.url === "/confirm") {
       const { id } = await readBody(req);
       const p = pending.get(id);
@@ -990,7 +942,7 @@ http.createServer(async (req, res) => {
       console.log(`[execute #${id}]`, describeAction(p.name, p.args));
       try {
         const result = await EXECUTORS[p.name](p.args);
-        // Let the model phrase the confirmation naturally
+        // Phrase confirmation.
         const follow = await ollamaChat(
           [...p.messages, { role: "assistant", content: `[Tool executed: ${result}]` },
            { role: "user", content: "Confirm to me briefly that it's done." }],
@@ -1003,14 +955,14 @@ http.createServer(async (req, res) => {
       }
     }
 
-    /* Cancel */
+    // Cancel write.
     if (req.method === "POST" && req.url === "/cancel") {
       const { id } = await readBody(req);
       pending.delete(id);
       return json(res, 200, { reply: "Understood, sir. Standing down." });
     }
 
-    /* Transcribe: fast path via in-memory whisper-server, CLI fallback */
+    // Transcribe audio.
     if (req.method === "POST" && req.url === "/transcribe") {
       const audio = await readRawBody(req);
       const ext = req.headers["x-audio-format"] || "webm";
@@ -1019,7 +971,7 @@ http.createServer(async (req, res) => {
         const fd = new FormData();
         fd.append("file", new Blob([audio], { type: `audio/${ext}` }), `audio.${ext}`);
         fd.append("response_format", "json");
-        fd.append("prompt", WHISPER_PROMPT); // bias decoding toward "Jarvis"
+        fd.append("prompt", WHISPER_PROMPT); // Jarvis bias
         const r = await fetch(`${WHISPER_SERVER_URL}/inference`, { method: "POST", body: fd });
         if (!r.ok) throw new Error(`whisper-server ${r.status}: ${await r.text()}`);
         const raw = ((await r.json()).text || "").trim();
@@ -1029,7 +981,7 @@ http.createServer(async (req, res) => {
         return json(res, 200, { text });
       }
 
-      // CLI fallback (slow — loads model each call)
+      // CLI fallback.
       const tmp = path.join(os.tmpdir(), `jarvis_${Date.now()}`);
       const inFile = `${tmp}.${ext}`;
       const wavFile = `${tmp}.wav`;

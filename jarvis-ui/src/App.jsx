@@ -1,13 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-/* ============================================================
-   J.A.R.V.I.S — Holographic Assistant Interface
-   Palette: void #030A12 · cyan #35D6F0 · dim #14506033 ·
-            amber #FFB347 · text #D8F4FA
-   Type:    Orbitron (display) · Share Tech Mono (data)
-   Signature: the reactor core — concentric rotating rings that
-   breathe while idle and surge while the AI is thinking.
-   ============================================================ */
+// JARVIS HUD theme and motion styles.
 
 const FONTS = `
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap');
@@ -35,66 +28,33 @@ const CYAN = "#35D6F0";
 const AMBER = "#FFB347";
 const TEXT = "#D8F4FA";
 
-/* ============================================================
-   BACKEND CONFIG — switch the AI brain here
-   "server" : your local JARVIS tool server (jarvis-server.mjs)
-              — Ollama brain + Calendar/Notes tools w/ confirmation.
-              Only works when running this UI locally on your Mac.
-   "ollama" : local model via Ollama directly — chat only, no tools.
-   "claude" : works inside claude.ai artifacts (no key needed).
-   Setup for server mode:
-     1. Install Ollama, then:  ollama pull qwen3.5:9b
-     2. Start Ollama:          ollama serve
-     3. Start the tool server: node jarvis-server.mjs
-     4. Run this UI locally (Vite) and set BACKEND to "server".
-   ============================================================ */
+// AI backend: "server", "ollama", or "claude".
 const BACKEND = "server"; // "server" | "ollama" | "claude"
 const SERVER_URL = "http://127.0.0.1:7077";
 const OLLAMA_URL = "http://localhost:11434/api/chat";
 const OLLAMA_MODEL = "qwen3.5:9b"; // default model
-/* Models the in-app switcher can toggle between (must be pulled in Ollama) */
+// Models must be pulled in Ollama first.
 const OLLAMA_MODELS = [
   { id: "qwen3.5:9b", label: "9B", tag: "SMART" },
   { id: "qwen2.5:7b", label: "7B", tag: "BALANCED" },
   { id: "qwen2.5:3b", label: "3B", tag: "FAST" },
   { id: "nemotron-mini", label: "NEMO", tag: "NVIDIA" },
 ];
-/* Mutable active model — updated by the in-app switcher, read by the
-   direct-to-Ollama code paths below (which run outside React). */
+// Shared by direct Ollama calls.
 let activeModel = OLLAMA_MODEL;
 
-/* ============================================================
-   TTS CONFIG — voice output
-   "browser"    : built-in macOS/browser voice (default, no key needed)
-   "openai"     : OpenAI TTS — natural voices, "onyx" sounds great as JARVIS
-                  Get a key at platform.openai.com
-   "elevenlabs" : ElevenLabs — highest quality, most JARVIS-like
-                  Get a key at elevenlabs.io
-   ============================================================ */
+// Voice output.
 const TTS_BACKEND = "browser";   // "browser" | "openai" | "elevenlabs"
 const TTS_API_KEY  = import.meta.env.VITE_TTS_API_KEY || ""; // OpenAI or ElevenLabs key
 const OPENAI_VOICE = "onyx";      // "alloy"|"echo"|"fable"|"onyx"|"nova"|"shimmer"
 const ELEVENLABS_VOICE_ID = "onwK4e9ZLuTAKqWW03F9"; // Daniel — deep, calm British male
 
-/* ============================================================
-   FREE LLM — optional intelligence boost via freellmapi
-   https://github.com/tashfeenahmed/freellmapi
-
-   SETUP (3 steps):
-   1. Clone the repo and follow its README to install + configure
-   2. Add your provider keys (Groq, Gemini, etc.) to freellmapi's .env
-   3. Start freellmapi — it runs on localhost:4000 by default
-
-   JARVIS auto-detects it on startup. If it's not running, the button
-   simply won't appear and everything works exactly as before.
-   To request a specific model, set FREELLM_MODEL below.
-   Leave it empty ("") for freellmapi's smart auto-routing.
-   ============================================================ */
+// Optional FreeLLMAPI proxy.
 const FREELLM_URL   = "http://localhost:3001"; // match freellmapi's port
 const FREELLM_KEY   = import.meta.env.VITE_FREELLM_KEY || ""; // unified key from freellmapi server log
 const FREELLM_MODEL = "";                       // "" = auto-route, or e.g. "meta-llama/llama-3.3-70b-instruct"
 
-/* Ask the local tool server. Returns { reply } or { pendingAction } */
+// Local tool server.
 async function askServer(history, memCtx) {
   const messages = history.map(m => ({
     role: m.role === "user" ? "user" : "assistant",
@@ -131,21 +91,17 @@ const JARVIS_PERSONA =
   "to delete one emit [TASK_REMOVE:title] — use the exact title from the list. " +
   "Example: 'Marked as complete, sir. [TASK_DONE:Fix login bug]'";
 
-/* Priority colour coding for the task panel */
+// Task priority styles.
 const PRIORITY_COLOR = { high: "#FF6B6B", medium: "#35D6F0", low: "#5A8A99" };
 const PRIORITY_LABEL = { high: "HIGH", medium: "MED", low: "LOW" };
 
-/* Inference options applied to every Ollama call.
-   think: true  — enables qwen3's internal chain-of-thought reasoning (hidden from output)
-   temperature  — lower = more focused, less hallucination
-   num_ctx      — context window in tokens (covers ~6k words of conversation history)
-   repeat_penalty — discourages rambling repetition */
+// Ollama inference defaults.
 const OLLAMA_OPTIONS = { temperature: 0.35, num_ctx: 8192, repeat_penalty: 1.1 };
 
-/* Whether the active model supports extended thinking (qwen3 family) */
+// qwen3 thinking support.
 const modelSupportsThinking = () => activeModel.startsWith("qwen3");
 
-/* Ask the local Llama model via Ollama */
+// Non-streaming Ollama call.
 async function askOllama(history, memCtx) {
   const systemContent = JARVIS_PERSONA + (memCtx ? "\n\n" + memCtx : "");
   const response = await fetch(OLLAMA_URL, {
@@ -169,7 +125,7 @@ async function askOllama(history, memCtx) {
   return data.message?.content?.trim() || "";
 }
 
-/* Ask Claude (works inside claude.ai artifacts, no API key needed) */
+// Non-streaming Claude call.
 async function askClaude(history, memCtx) {
   const systemContent = JARVIS_PERSONA + (memCtx ? "\n\n" + memCtx : "");
   const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -198,7 +154,7 @@ async function askClaude(history, memCtx) {
     .trim();
 }
 
-/* Stream from local Ollama model */
+// Streaming Ollama call.
 async function* streamOllama(history, memCtx) {
   const systemContent = JARVIS_PERSONA + (memCtx ? "\n\n" + memCtx : "");
   const response = await fetch(OLLAMA_URL, {
@@ -235,7 +191,7 @@ async function* streamOllama(history, memCtx) {
   }
 }
 
-/* Stream from Claude API */
+// Streaming Claude call.
 async function* streamClaude(history, memCtx) {
   const systemContent = JARVIS_PERSONA + (memCtx ? "\n\n" + memCtx : "");
   const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -278,7 +234,7 @@ async function* streamClaude(history, memCtx) {
   }
 }
 
-/* Stream via freellmapi (OpenAI-compatible SSE format) */
+// Streaming FreeLLMAPI call.
 async function* streamFreeLLM(history, memCtx) {
   const systemContent = JARVIS_PERSONA + (memCtx ? "\n\n" + memCtx : "");
   const response = await fetch(`${FREELLM_URL}/v1/chat/completions`, {
@@ -316,20 +272,18 @@ async function* streamFreeLLM(history, memCtx) {
   }
 }
 
-/* ---------- Reactor core: the signature element ---------- */
+// Reactor core.
 function ReactorCore({ state, amplitude = 0 }) {
-  // state: "idle" | "thinking" | "speaking" | "listening"
   const surge = state !== "idle";
   const speaking = state === "speaking";
   const listening = state === "listening";
 
-  // energy: 0 when idle, ~0.6 when thinking/listening, 0.2–1 when speaking
   const energy = speaking ? Math.max(0.2, amplitude) : surge ? 0.6 : 0;
 
-  // Ring spin speed: amplitude-driven during speaking
+  // Speaking speed.
   const speedMul = speaking ? 1 + energy * 4 : surge ? 3 : 1;
 
-  // Ring base color: greenish for listening, cyan otherwise
+  // Listening color.
   const ringColor = listening ? "#35F0A0" : CYAN;
 
   const ringStyle = (dur, dir, extra = {}) => ({
@@ -341,7 +295,6 @@ function ReactorCore({ state, amplitude = 0 }) {
     ...extra,
   });
 
-  // Core inset pulses with amplitude
   const coreInset = Math.max(27, 31 - energy * 4);
 
   return (
@@ -360,7 +313,6 @@ function ReactorCore({ state, amplitude = 0 }) {
       aria-label={`Assistant core, status ${state}`}
       role="img"
     >
-      {/* Ripple rings — speaking only, expand/fade with amplitude */}
       {speaking && (
         <svg viewBox="0 0 200 200" style={{ position: "absolute", inset: 0 }}>
           <circle cx="100" cy="100"
@@ -381,7 +333,6 @@ function ReactorCore({ state, amplitude = 0 }) {
           />
         </svg>
       )}
-      {/* Ring 1 — outer ticks */}
       <svg viewBox="0 0 200 200" style={ringStyle(40, "spinCW")}>
         {Array.from({ length: 60 }).map((_, i) => (
           <line
@@ -393,7 +344,6 @@ function ReactorCore({ state, amplitude = 0 }) {
           />
         ))}
       </svg>
-      {/* Ring 2 — dashed orbit; shifts amber at high amplitude */}
       <svg viewBox="0 0 200 200" style={ringStyle(26, "spinCCW")}>
         <circle cx="100" cy="100" r="80" fill="none"
           stroke={speaking && energy > 0.75 ? AMBER : ringColor}
@@ -401,7 +351,6 @@ function ReactorCore({ state, amplitude = 0 }) {
           style={{ transition: "stroke 0.12s" }} />
         <circle cx="100" cy="20" r="2.6" fill={ringColor} />
       </svg>
-      {/* Ring 3 — segmented arcs */}
       <svg viewBox="0 0 200 200" style={ringStyle(18, "spinCW")}>
         <circle cx="100" cy="100" r="64" fill="none"
           stroke={ringColor}
@@ -410,14 +359,12 @@ function ReactorCore({ state, amplitude = 0 }) {
           stroke={ringColor}
           strokeWidth="1" strokeDasharray="8 10" opacity="0.8" />
       </svg>
-      {/* Ring 4 — inner counter ring; amber during speaking/thinking */}
       <svg viewBox="0 0 200 200" style={ringStyle(10, "spinCCW")}>
         <circle cx="100" cy="100" r="48" fill="none"
           stroke={listening ? "#35F0A0" : (surge ? AMBER : CYAN)}
           strokeWidth="1.2" strokeDasharray="26 18" opacity="0.85"
           style={{ transition: "stroke .2s" }} />
       </svg>
-      {/* Core — pulses size and glow with amplitude */}
       <div style={{
         position: "absolute",
         inset: `${coreInset}%`,
@@ -436,7 +383,6 @@ function ReactorCore({ state, amplitude = 0 }) {
         ].filter(Boolean).join(", "),
         transition: speaking ? "inset 0.1s, box-shadow 0.1s" : "inset .3s, box-shadow .5s",
       }} />
-      {/* Voice bars equalizer — speaking only */}
       {speaking && (
         <div style={{
           display: "flex", gap: 3, alignItems: "flex-end", justifyContent: "center",
@@ -459,7 +405,7 @@ function ReactorCore({ state, amplitude = 0 }) {
   );
 }
 
-/* ---------- Animated telemetry bar ---------- */
+// Telemetry bar.
 function Gauge({ label, value, unit }) {
   return (
     <div style={{ marginBottom: 14 }}>
@@ -482,7 +428,7 @@ function Gauge({ label, value, unit }) {
   );
 }
 
-/* ---------- Corner bracket frame ---------- */
+// Frame corners.
 function Brackets() {
   const c = { position: "absolute", width: 26, height: 26, borderColor: CYAN + "99", borderStyle: "solid", borderWidth: 0 };
   return (
@@ -495,7 +441,7 @@ function Brackets() {
   );
 }
 
-/* ---------- Message text renderer — bullets, section labels, bold, code ---------- */
+// Message renderer.
 function renderInline(text) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
   if (parts.length === 1) return text;
@@ -522,7 +468,7 @@ function MessageText({ text }) {
         const isBullet = l => /^[•\-\*]\s/.test(l);
         const stripBullet = l => l.replace(/^[•\-\*]\s/, "");
 
-        // Pure bullet block → render as a list
+        // Bullet list.
         if (lines.every(isBullet)) {
           return (
             <ul key={bi} style={{ margin: bi > 0 ? "6px 0 8px" : "4px 0 8px", paddingLeft: 0, listStyle: "none" }}>
@@ -536,7 +482,7 @@ function MessageText({ text }) {
           );
         }
 
-        // Single ## header
+        // Header.
         if (lines.length === 1 && /^##\s/.test(lines[0])) {
           return (
             <div key={bi} style={{
@@ -548,7 +494,7 @@ function MessageText({ text }) {
           );
         }
 
-        // Mixed block — line by line
+        // Mixed lines.
         return (
           <div key={bi} style={{ marginBottom: bi < blocks.length - 1 ? 8 : 0 }}>
             {lines.map((line, li) => {
@@ -560,7 +506,7 @@ function MessageText({ text }) {
                   </div>
                 );
               }
-              // "Label: content" section lines (e.g. Summary:, Source:, Answer:)
+              // Label: content.
               const sm = line.match(/^([A-Za-z][A-Za-z ]{1,18}):\s+(.+)/);
               if (sm) {
                 return (
@@ -573,7 +519,6 @@ function MessageText({ text }) {
                   </div>
                 );
               }
-              // Plain line
               return (
                 <div key={li} style={{ lineHeight: 1.6, marginBottom: li < lines.length - 1 ? 2 : 0 }}>
                   {renderInline(line)}
@@ -589,10 +534,7 @@ function MessageText({ text }) {
 
 const nowTs = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
-/* Probe the active backend on startup.
-   If the local core is down, attempt fallback to Claude — but report
-   it loudly so the user knows responses are leaving the machine.
-   Returns { ok, detail, backend, fallback } */
+// Probe backend.
 async function probeServer(signal) {
   const r = await fetch(`${SERVER_URL}/health`, { signal });
   if (!r.ok) throw new Error("bad status");
@@ -613,7 +555,7 @@ async function probeOllama(signal) {
   return activeModel.toUpperCase();
 }
 
-/* Check if freellmapi is running — used once on startup, non-blocking */
+// Detect FreeLLMAPI.
 async function probeFreeLLM() {
   try {
     const ctrl = new AbortController();
@@ -621,10 +563,10 @@ async function probeFreeLLM() {
     const r = await fetch(`${FREELLM_URL}/v1/models`, { signal: ctrl.signal, headers: { "Authorization": `Bearer ${FREELLM_KEY}` } });
     if (!r.ok) return null;
     const data = await r.json();
-    // Return the first available model name so we can show it in the UI
+    // Show first model.
     return (data.data?.[0]?.id) || "auto";
   } catch {
-    return null; // not running — that's fine, just disable the button
+    return null; // offline
   }
 }
 
@@ -654,7 +596,7 @@ async function checkCognitionCore() {
           : await probeOllama(ctrl.signal);
         return { ok: true, detail, backend: BACKEND, fallback: false };
       } catch {
-        // Local core down — try the cloud as a clearly-flagged fallback
+        // Ask before cloud fallback.
         try {
           const ctrl2 = new AbortController();
           const t2 = setTimeout(() => ctrl2.abort(), 4000);
@@ -684,7 +626,7 @@ const BOOT_LINES = [
   "VOICE PROTOCOL ..................... ARMED",
 ];
 
-/* Spoken on every fresh open — always a hello + a readiness note */
+// Fresh greeting.
 const GREETINGS = [
   "Hello again, sir. All systems are online and I'm ready when you are.",
   "Welcome back, sir. Fully operational and standing by for your command.",
@@ -706,8 +648,7 @@ export default function JarvisInterface() {
   const [switchingModel, setSwitchingModel] = useState(false);
   const [clock, setClock] = useState(new Date());
   const [stats, setStats] = useState({ pwr: 98.4, cpu: 22, net: 61, tmp: 34 });
-  // Previous session's log — captured at startup (before it gets overwritten) so
-  // its important parts can be distilled into long-term memory, then discarded.
+  // Previous session snapshot.
   const [priorSession] = useState(() => {
     try {
       const saved = localStorage.getItem("jarvis-history");
@@ -715,7 +656,7 @@ export default function JarvisInterface() {
       return Array.isArray(parsed) ? parsed : [];
     } catch { return []; }
   });
-  // Always open with a clean log — important facts persist via the brain memory.
+  // Start clean; memory persists.
   const [messages, setMessages] = useState([
     { role: "assistant", text: "Good evening, sir. All systems are online. How may I assist you?" },
   ]);
@@ -735,14 +676,14 @@ export default function JarvisInterface() {
   const [amplitude, setAmplitude] = useState(0);
   const mediaRecorderRef = useRef(null);
 
-  /* ---------- Wake word + PTT refs ---------- */
+  // Wake word + PTT refs
   const listeningRef = useRef(false);
   listeningRef.current = listening;
   const startListeningRef = useRef(null);
   const stopListeningRef = useRef(null);
   const pttSourceRef = useRef("local"); // "local" = in-window ⌥/button, "global" = system-wide ⌥V
 
-  /* ---------- Brain memory ---------- */
+  // Brain memory
   const [memories, setMemories] = useState(() => {
     try {
       const saved = localStorage.getItem("jarvis-memories");
@@ -755,7 +696,7 @@ export default function JarvisInterface() {
   const memoriesRef = useRef([]);
   memoriesRef.current = memories;
 
-  /* ---------- Task list ---------- */
+  // Task list
   const [tasks, setTasks] = useState(() => {
     try { const s = localStorage.getItem("jarvis-tasks"); return s ? JSON.parse(s) : []; } catch { return []; }
   });
@@ -765,27 +706,25 @@ export default function JarvisInterface() {
   const tasksRef = useRef([]);
   tasksRef.current = tasks;
 
-  /* ---------- freellmapi optional backend ---------- */
-  // freeLLMAvailable: set to the detected model string if freellmapi is running, null otherwise
-  // freeLLMActive: user has toggled it on — only usable when Available is non-null
+  // FreeLLMAPI state.
   const [freeLLMAvailable, setFreeLLMAvailable] = useState(null);
   const [freeLLMActive, setFreeLLMActive] = useState(false);
 
-  /* ---------- Voice output: JARVIS speaks ---------- */
+  // Voice output.
   const [voices, setVoices] = useState([]);
   const [voiceURI, setVoiceURI] = useState(null);
   const voiceURIRef = useRef(null);
   voiceURIRef.current = voiceURI;
 
-  /* Rank installed voices by how JARVIS-like they are: British male first */
+  // Rank voices.
   const rankVoice = (v) => {
     let score = 0;
     if (/en-GB/i.test(v.lang)) score += 100;
     else if (/^en/i.test(v.lang)) score += 40;
-    if (/daniel/i.test(v.name)) score += 60;            // macOS — closest match
+    if (/daniel/i.test(v.name)) score += 60;            // macOS
     if (/george|arthur|ryan|oliver|brian/i.test(v.name)) score += 40;
     if (/google uk english male/i.test(v.name)) score += 55; // Chrome
-    if (/enhanced|premium|neural/i.test(v.name)) score += 30; // higher-quality variants
+    if (/enhanced|premium|neural/i.test(v.name)) score += 30; // quality
     if (/male/i.test(v.name)) score += 20;
     if (/female|samantha|kate|serena|susan|zira/i.test(v.name)) score -= 30;
     return score;
@@ -797,7 +736,7 @@ export default function JarvisInterface() {
         .filter(v => /^en/i.test(v.lang))
         .sort((a, b) => rankVoice(b) - rankVoice(a));
       setVoices(all);
-      // Prefer a previously-chosen voice (if still installed), else the top-ranked one
+      // Prefer saved voice.
       let saved = null;
       try { saved = localStorage.getItem("jarvis-voice"); } catch {}
       const savedOk = saved && all.some(v => v.voiceURI === saved);
@@ -808,12 +747,12 @@ export default function JarvisInterface() {
     return () => window.speechSynthesis?.removeEventListener?.("voiceschanged", load);
   }, []);
 
-  /* Remember the chosen voice across restarts */
+  // Persist voice.
   useEffect(() => {
     if (voiceURI) { try { localStorage.setItem("jarvis-voice", voiceURI); } catch {} }
   }, [voiceURI]);
 
-  /* ---------- Audio analyser helpers (tap real amplitude from Audio element) ---------- */
+  // Audio analyser.
   const connectAudioAnalyser = (audioEl) => {
     try {
       if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
@@ -840,7 +779,7 @@ export default function JarvisInterface() {
     amplitudeRef.current = 0;
   };
 
-  /* Update amplitude state at ~30fps only while speaking */
+  // Update amplitude while speaking.
   useEffect(() => {
     if (coreState !== "speaking") { setAmplitude(0); return; }
     const id = setInterval(() => setAmplitude(amplitudeRef.current), 33);
@@ -850,14 +789,14 @@ export default function JarvisInterface() {
   const speak = useCallback(async (text) => {
     if (!voiceOnRef.current) return;
 
-    // Stop anything currently playing
+    // Stop current audio.
     window.speechSynthesis?.cancel();
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
 
-    /* --- OpenAI TTS ----------------------------------------- */
+    // OpenAI TTS
     if (TTS_BACKEND === "openai" && TTS_API_KEY) {
       try {
         setCoreState("speaking");
@@ -879,7 +818,7 @@ export default function JarvisInterface() {
       return;
     }
 
-    /* --- ElevenLabs TTS (streaming — starts playback on first chunk) --- */
+    // ElevenLabs TTS.
     if (TTS_BACKEND === "elevenlabs" && TTS_API_KEY) {
       try {
         setCoreState("speaking");
@@ -919,7 +858,7 @@ export default function JarvisInterface() {
           }, { once: true });
           audio.play().catch(() => {});
         } else {
-          // Fallback: full blob (no MediaSource support)
+          // Blob fallback.
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
           const audio = new Audio(url);
@@ -933,7 +872,7 @@ export default function JarvisInterface() {
       return;
     }
 
-    /* --- Browser TTS fallback -------------------------------- */
+    // Browser TTS fallback
     if (!window.speechSynthesis) return;
     const u = new SpeechSynthesisUtterance(text);
     const all = window.speechSynthesis.getVoices();
@@ -945,7 +884,7 @@ export default function JarvisInterface() {
     u.pitch = 0.85;
     u.onstart = () => {
       setCoreState("speaking");
-      // Simulate amplitude with a natural-feeling random walk
+      // Simulate amplitude.
       let t = 0;
       const simulate = () => {
         t += 0.05;
@@ -959,13 +898,13 @@ export default function JarvisInterface() {
     window.speechSynthesis.speak(u);
   }, []);
 
-  /* ---------- Memory helpers ---------- */
+  // Memory helpers
 
   const IMPORTANCE_BY_CATEGORY = { correction: 5, preference: 4, habit: 3, routine: 3, fact: 3, general: 2 };
   const CATEGORY_COLOR = { correction: "#F0A035", preference: "#35C5F0", habit: "#35F0A0", routine: "#A035F0", fact: "#F03575", general: "#607080" };
   const CORRECTION_RE = /\b(no[,.]?\s*(that'?s|that is|I|you)|actually[,\s]|I meant|I said|not that|you'?re wrong|that'?s (not|wrong|incorrect)|I didn'?t say|no sir)\b/i;
 
-  /* Jaccard similarity on content words — used for dedup */
+  // Memory similarity.
   const wordSim = (a, b) => {
     const wa = new Set(a.toLowerCase().split(/\W+/).filter(w => w.length > 4));
     const wb = new Set(b.toLowerCase().split(/\W+/).filter(w => w.length > 4));
@@ -974,7 +913,7 @@ export default function JarvisInterface() {
     return inter / (wa.size + wb.size - inter);
   };
 
-  /* Return top-15 relevant memories, weighted by keyword match + recency + frequency */
+  // Rank memories.
   const getMemoryContext = useCallback((userMessage) => {
     if (!memoriesRef.current.length) return "";
     const words = userMessage.toLowerCase().split(/\W+/).filter(w => w.length > 3);
@@ -983,18 +922,18 @@ export default function JarvisInterface() {
       const ml = m.content.toLowerCase();
       let score = (m.importance || 2) * 2;
       words.forEach(w => { if (ml.includes(w)) score += 4; });
-      // recency: memories accessed within 7 days get up to +5
+      // Recency boost.
       const last = m.lastAccessed ? new Date(m.lastAccessed).getTime() : new Date(m.createdAt).getTime();
       score += Math.max(0, 5 - (now - last) / 86400000 * 0.5);
-      // frequency boost
+      // Frequency boost.
       score += Math.min(m.accessCount || 0, 10) * 0.3;
-      // category boosts
+      // Category boost.
       if (m.category === "correction") score += 4;
       if (m.category === "preference") score += 2;
       return { ...m, _score: score };
     }).sort((a, b) => b._score - a._score).slice(0, 15);
     if (!scored.length) return "";
-    // Track that these memories were accessed
+    // Track access.
     const ids = new Set(scored.map(m => m.id));
     setMemories(prev => prev.map(m => ids.has(m.id)
       ? { ...m, accessCount: (m.accessCount || 0) + 1, lastAccessed: new Date().toISOString() }
@@ -1003,7 +942,7 @@ export default function JarvisInterface() {
     return "JARVIS MEMORY:\n" + scored.map(m => `- [${m.category || "fact"}] ${m.content}`).join("\n");
   }, []);
 
-  /* Run the LLM fact-extractor over a block of text, merge results into memory */
+  // Extract memories.
   const ingestFacts = useCallback(async (sourceText, forceCategory = null) => {
     try {
       const backend = aiStatusRef.current.backend;
@@ -1036,7 +975,7 @@ export default function JarvisInterface() {
       if (!match) return;
       let items = JSON.parse(match[0]);
       if (!Array.isArray(items) || !items.length) return;
-      // Normalise: accept plain strings too
+      // Accept strings too.
       items = items.map(i => typeof i === "string" ? { fact: i, category: forceCategory || "general" } : i);
       setMemories(prev => {
         let updated = [...prev];
@@ -1044,7 +983,7 @@ export default function JarvisInterface() {
           const content = (item.fact || "").trim();
           const category = forceCategory || item.category || "general";
           if (!content) continue;
-          // Dedup: if very similar memory exists, boost its importance instead of duplicating
+          // Dedup similar facts.
           const similar = updated.find(m => wordSim(m.content, content) > 0.55);
           if (similar) {
             updated = updated.map(m => m.id === similar.id
@@ -1066,7 +1005,7 @@ export default function JarvisInterface() {
     } catch {}
   }, []);
 
-  /* Fire-and-forget: extract memorable facts from a single exchange, detect corrections */
+  // Extract exchange memories.
   const extractMemories = useCallback((userText, assistantText) => {
     if (CORRECTION_RE.test(userText)) {
       ingestFacts(
@@ -1078,18 +1017,17 @@ export default function JarvisInterface() {
     }
   }, [ingestFacts]);
 
-  /* On startup: distill the important parts of the previous session into memory
-     before the log is cleared, so nothing notable is lost between opens. */
+  // Save previous-session facts.
   const consolidateSession = useCallback((history) => {
     const turns = (history || []).filter(m => (m.role === "user" || m.role === "assistant") && m.text?.trim());
-    if (turns.length < 2) return; // nothing meaningful to remember
+    if (turns.length < 2) return;
     const transcript = turns
       .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`)
       .join("\n");
     ingestFacts(`This is the full transcript of the previous conversation:\n${transcript}`);
   }, [ingestFacts]);
 
-  /* Add a memory manually */
+  // Add manual memory.
   const addMemory = useCallback((content) => {
     if (!content.trim()) return;
     setMemories(prev => {
@@ -1107,14 +1045,13 @@ export default function JarvisInterface() {
     setMemories(prev => prev.filter(m => m.id !== id));
   }, []);
 
-  /* Keep the module-level mutable + persistence in sync with the selected model */
+  // Sync selected model.
   useEffect(() => {
     activeModel = model;
     try { localStorage.setItem("jarvis-model", model); } catch {}
   }, [model]);
 
-  /* Hot-swap the active model: tell the tool-server, then re-probe the core.
-     No process restart — Ollama loads the new model on the next message. */
+  // Hot-swap model.
   const switchModel = useCallback(async (next) => {
     if (next === model) return;
     setSwitchingModel(true);
@@ -1128,13 +1065,13 @@ export default function JarvisInterface() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: next }),
       });
-    } catch { /* server may be in ollama/claude mode — direct paths use activeModel */ }
+    } catch { /* direct mode */ }
     const { ok, detail, backend, fallback } = await checkCognitionCore();
     setAiStatus({ state: ok ? "online" : "offline", detail, backend, fallback });
     setSwitchingModel(false);
   }, [model]);
 
-  /* Boot sequence: sync the saved model to the server, probe the core, bring up the HUD */
+  // Boot sequence.
   useEffect(() => {
     (async () => {
       try {
@@ -1143,12 +1080,12 @@ export default function JarvisInterface() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model }),
         });
-      } catch { /* server may be offline or in a non-server backend mode */ }
+      } catch { /* server optional */ }
       const { ok, detail, backend, fallback } = await checkCognitionCore();
-      // Sync the ref now so the consolidation pass below sees the live backend
+      // Sync backend ref.
       aiStatusRef.current = { state: ok ? "online" : "offline", detail, backend, fallback };
       setAiStatus(aiStatusRef.current);
-      // Remember the important parts of the previous session, then leave the log cleared
+      // Save old session facts.
       if (ok) consolidateSession(priorSession);
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1158,16 +1095,15 @@ export default function JarvisInterface() {
       const t = setTimeout(() => setBootStep(s => s + 1), 320);
       return () => clearTimeout(t);
     }
-    // Static lines done — wait for the cognition core probe to resolve
+    // Wait for backend probe.
     if (aiStatus.state === "checking") return;
-    // Cloud fallback engaged: HALT here. The acknowledgment gate
-    // (rendered below) takes over — no auto-boot, user must confirm.
+    // Wait for cloud confirmation.
     if (aiStatus.fallback) return;
     const ok = aiStatus.state === "online";
     const t = setTimeout(() => {
       setBooted(true);
       setMessages(prev => {
-        // If history was loaded from memory, keep it — just append a brief status note
+        // Resume existing log.
         const hasHistory = prev.length > 1 || (prev.length === 1 && prev[0].text !== "Good evening, sir. All systems are online. How may I assist you?");
         if (hasHistory) {
           if (!ok) {
@@ -1175,14 +1111,14 @@ export default function JarvisInterface() {
             setTimeout(() => speak(warn), 600);
             return [...prev, { role: "assistant", text: warn }];
           }
-          // Don't repeat greeting when resuming from memory; just open silently
+          // Avoid duplicate greeting.
           return prev;
         }
-        // Fresh start — always greet with a hello + readiness note
+        // Fresh greeting.
         let greeting = !ok
           ? "Sir, I must report that no cognition core is reachable — neither local nor cloud. My responses will be unavailable until one recovers."
           : randomGreeting();
-        // Proactively mention high-priority pending tasks on startup
+        // Surface urgent tasks.
         if (ok) {
           const urgent = tasksRef.current.filter(t => !t.done && t.priority === "high");
           if (urgent.length === 1) greeting += ` Also, sir — you have one high-priority task outstanding: "${urgent[0].title}".`;
@@ -1195,7 +1131,7 @@ export default function JarvisInterface() {
     return () => clearTimeout(t);
   }, [bootStep, aiStatus, speak]);
 
-  /* User explicitly accepts cloud fallback */
+  // Accept cloud fallback.
   const acknowledgeFallback = useCallback(() => {
     setBooted(true);
     const greeting =
@@ -1204,7 +1140,7 @@ export default function JarvisInterface() {
     setTimeout(() => speak(greeting), 400);
   }, [speak]);
 
-  /* Voice alarm when the gate appears, so it's heard even if not seen */
+  // Fallback alert.
   const gateSpokenRef = useRef(false);
   useEffect(() => {
     if (aiStatus.fallback && bootStep >= BOOT_LINES.length && !booted && !gateSpokenRef.current) {
@@ -1213,7 +1149,7 @@ export default function JarvisInterface() {
     }
   }, [aiStatus, bootStep, booted, speak]);
 
-  /* Option key — push-to-talk: hold to record, release to stop & send */
+  // Local push-to-talk.
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key !== "Alt") return;
@@ -1228,7 +1164,7 @@ export default function JarvisInterface() {
       stopListeningRef.current?.();
     };
     const handleBlur = () => {
-      // Only cancel in-window recordings on blur — global ⌥V runs while unfocused
+      // Keep global PTT alive.
       if (pttSourceRef.current === "local") stopListeningRef.current?.();
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -1241,7 +1177,7 @@ export default function JarvisInterface() {
     };
   }, []); // stable — uses refs internally
 
-  /* Global ⌥V push-to-talk via Electron — works even when Jarvis isn't the active app */
+  // Global push-to-talk.
   useEffect(() => {
     if (!window.electronAPI?.onPttDown) return;
     const offDown = window.electronAPI.onPttDown(() => {
@@ -1254,7 +1190,7 @@ export default function JarvisInterface() {
     return () => { offDown?.(); offUp?.(); };
   }, []); // stable — uses refs internally
 
-  /* Escape — stop speaking immediately; if already silent, toggle voice on/off */
+  // Escape controls voice.
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.code !== "Escape") return;
@@ -1278,7 +1214,7 @@ export default function JarvisInterface() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []); // stable — uses refs internally
 
-  /* Clock + drifting telemetry */
+  // Clock and telemetry.
   useEffect(() => {
     const t = setInterval(() => {
       setClock(new Date());
@@ -1292,25 +1228,24 @@ export default function JarvisInterface() {
     return () => clearInterval(t);
   }, []);
 
-  /* Persist conversation history across reloads (keep last 80 messages) */
+  // Persist recent chat.
   useEffect(() => {
     try {
       localStorage.setItem("jarvis-history", JSON.stringify(messages.slice(-80)));
     } catch {}
   }, [messages]);
 
-  /* Persist brain memories */
+  // Persist memories.
   useEffect(() => {
     try { localStorage.setItem("jarvis-memories", JSON.stringify(memories)); } catch {}
   }, [memories]);
 
-  /* Persist tasks */
+  // Persist tasks.
   useEffect(() => {
     try { localStorage.setItem("jarvis-tasks", JSON.stringify(tasks)); } catch {}
   }, [tasks]);
 
-  /* Probe freellmapi once on mount — completely non-blocking.
-     If it's not running nothing happens; if it is, the button appears. */
+  // Probe FreeLLMAPI once.
   useEffect(() => {
     probeFreeLLM().then(model => {
       if (model) {
@@ -1320,14 +1255,14 @@ export default function JarvisInterface() {
     });
   }, []);
 
-  /* Task helpers */
+  // Task helpers.
   const addTask = useCallback((title, priority = "medium") => {
     const t = title.trim();
     if (!t) return;
     setTasks(prev => [...prev, { id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`, title: t, priority, done: false, createdAt: Date.now() }]);
   }, []);
 
-  /* Fuzzy title match so "free llm api" finds "Free LLM API integration" */
+  // Fuzzy task lookup.
   const findTaskByTitle = useCallback((title) => {
     const q = title.trim().toLowerCase();
     if (!q) return null;
@@ -1358,9 +1293,7 @@ export default function JarvisInterface() {
     setTasks(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  /* Receive quick-ask overlay (⌥Space) exchanges so both windows share one log.
-     Dual approach: IPC fast-path (fires immediately when main window is ready)
-     + localStorage buffer (drained on mount & focus so no exchanges are lost). */
+  // Sync Quick Ask exchanges.
   const drainQuickLog = useCallback(() => {
     const LS_KEY = "jarvis-quick-log";
     const CURSOR_KEY = "jarvis-quick-log-cursor";
@@ -1374,7 +1307,7 @@ export default function JarvisInterface() {
         { role: "assistant", text: assistant, ts: nowTs(), fromOverlay: true },
       ]);
       setMessages(m => {
-        // Avoid duplicating entries that arrived via IPC already
+        // Avoid duplicates.
         const lastTs = m.filter(x => x.fromOverlay).map(x => x._raw_ts || 0);
         return [...m, ...newMsgs];
       });
@@ -1383,17 +1316,17 @@ export default function JarvisInterface() {
   }, []);
 
   useEffect(() => {
-    // Drain on mount (catches exchanges that happened before this window loaded)
+    // Drain on mount.
     drainQuickLog();
 
-    // Drain whenever window becomes visible again (user returns from overlay)
+    // Drain on focus.
     const onFocus = () => drainQuickLog();
     window.addEventListener("focus", onFocus);
 
-    // IPC fast-path: fires immediately when main window is already loaded
+    // IPC fast path.
     const cleanupIpc = window.electronAPI?.onQuickExchange?.(({ user, assistant, ts }) => {
       const CURSOR_KEY = "jarvis-quick-log-cursor";
-      // Mark this ts as processed so drainQuickLog doesn't double-add it
+      // Mark processed.
       try {
         const cursor = Number(localStorage.getItem(CURSOR_KEY) || "0");
         if (ts) localStorage.setItem(CURSOR_KEY, String(Math.max(cursor, ts)));
@@ -1416,9 +1349,9 @@ export default function JarvisInterface() {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, coreState]);
 
-  /* Parse [OPEN:AppName] tags, execute opens, return display text */
+  // Parse action tags.
   const parseAndExecuteActions = useCallback((text) => {
-    // Handle [OPEN:AppName] tags
+    // Open apps.
     const openMatches = [...text.matchAll(/\[OPEN:([^\]]+)\]/g)];
     for (const match of openMatches) {
       const appName = match[1].trim();
@@ -1433,7 +1366,7 @@ export default function JarvisInterface() {
         }).catch(() => {});
       }
     }
-    // Handle [TASK:title:priority] tags
+    // Add tasks.
     const added = [];
     const taskMatches = [...text.matchAll(/\[TASK:([^:\]]+):?(high|medium|low)?\]/gi)];
     for (const match of taskMatches) {
@@ -1442,7 +1375,7 @@ export default function JarvisInterface() {
       addTask(title, priority);
       added.push(title);
     }
-    // Handle [TASK_DONE:title] and [TASK_REMOVE:title] tags
+    // Update tasks.
     const completed = [], removed = [], notFound = [];
     for (const match of text.matchAll(/\[TASK_DONE:([^\]]+)\]/gi)) {
       const task = completeTaskByTitle(match[1]);
@@ -1458,7 +1391,7 @@ export default function JarvisInterface() {
       .replace(/\[TASK_(?:DONE|REMOVE):[^\]]+\]/gi, '')
       .trim();
     if (stripped) return stripped;
-    // Tag-only reply: confirm task actions out loud — only [OPEN:...] stays silent
+    // Confirm tag-only tasks.
     const parts = [];
     if (added.length === 1) parts.push(`"${added[0]}" added to your task list, sir.`);
     else if (added.length > 1) parts.push(`${added.length} tasks added to your list, sir.`);
@@ -1470,7 +1403,7 @@ export default function JarvisInterface() {
     return parts.join(" ");
   }, [addTask, completeTaskByTitle, removeTaskByTitle]);
 
-  /* Real AI call — Claude answers in-character */
+  // Send chat.
   const send = useCallback(async (spoken) => {
     const text = (typeof spoken === "string" ? spoken : input).trim();
     if (!text || coreState === "thinking") return;
@@ -1490,7 +1423,7 @@ export default function JarvisInterface() {
     setCoreState("thinking");
     try {
       const backend = aiStatusRef.current.backend;
-      // Live task list so the model can answer about, complete, or remove tasks
+      // Include live tasks.
       const taskCtx = tasksRef.current.length
         ? "USER'S CURRENT TASK LIST:\n" + tasksRef.current.map(t =>
             `- "${t.title}" [${t.priority}]${t.done ? " (done)" : ""}`).join("\n")
@@ -1499,7 +1432,7 @@ export default function JarvisInterface() {
       if (backend === "server") {
         const result = await askServer(history, memCtx);
         if (result.pendingAction) {
-          // Write-action requested: show a confirmation card, do NOT execute yet
+          // Confirm writes first.
           setCoreState("idle");
           setMessages(m => [...m, {
             role: "action",
@@ -1512,14 +1445,14 @@ export default function JarvisInterface() {
         }
         const rawReply = result.reply || "";
         const reply = parseAndExecuteActions(rawReply);
-        // Silent action — tags were stripped, nothing left to show or speak
+        // Silent action.
         if (!reply) {
           setCoreState("idle");
           return;
         }
         setMessages(m => [...m, { role: "assistant", text: reply, ts: nowTs() }]);
         extractMemories(text, reply);
-        // Proactive task nudge: every 6 exchanges, surface the oldest high-priority undone task
+        // Nudge urgent tasks.
         const pendingHigh = tasksRef.current.filter(t => !t.done && t.priority === "high");
         const userMsgCount = [...messages, { role: "user" }].filter(m => m.role === "user").length;
         const nudge = pendingHigh.length > 0 && userMsgCount > 0 && userMsgCount % 6 === 0
@@ -1531,12 +1464,12 @@ export default function JarvisInterface() {
         else { setCoreState("speaking"); setTimeout(() => setCoreState("idle"), 1800); }
         return;
       }
-      // Streaming path for ollama / claude / freellmapi
+      // Streaming path.
       const msgId = Date.now();
       const streamTs = nowTs();
       setMessages(m => [...m, { role: "assistant", text: "", _streaming: true, _id: msgId, ts: streamTs }]);
       let fullText = "";
-      // freeLLM takes priority when active and available — falls back silently on error
+      // Prefer FreeLLMAPI.
       const useFreeLLM = freeLLMActive && freeLLMAvailable;
         const stream = useFreeLLM
           ? streamFreeLLM(history, memCtx)
@@ -1548,7 +1481,7 @@ export default function JarvisInterface() {
           }
         } catch (streamErr) {
           if (useFreeLLM) {
-            // freellmapi failed mid-stream — disable it, let the user know, fall back
+            // Fall back on failure.
             console.warn("[freellmapi] stream error, disabling:", streamErr.message);
             setFreeLLMActive(false);
             fullText = "⚠ Free LLM uplink lost, sir — falling back to local core.";
@@ -1556,13 +1489,13 @@ export default function JarvisInterface() {
         }
       const rawFinal = fullText || "";
       const finalReply = parseAndExecuteActions(rawFinal);
-      // Silent action — tags were stripped, nothing left to show or speak
+      // Silent action.
       if (!finalReply) {
         setMessages(m => m.filter(msg => msg._id !== msgId));
         setCoreState("idle");
         return;
       }
-      // Proactive task nudge: every 6 exchanges, surface the oldest high-priority undone task
+      // Nudge urgent tasks.
       const pendingHighS = tasksRef.current.filter(t => !t.done && t.priority === "high");
       const userMsgCountS = [...messages, { role: "user" }].filter(m => m.role === "user").length;
       const nudgeS = pendingHighS.length > 0 && userMsgCountS > 0 && userMsgCountS % 6 === 0
@@ -1588,7 +1521,7 @@ export default function JarvisInterface() {
     }
   }, [input, messages, coreState, speak, getMemoryContext, extractMemories]);
 
-  /* ---------- Tool action confirmation (write-gate) ---------- */
+  // Write confirmation.
   const resolveAction = useCallback(async (id, approve) => {
     setMessages(m => m.map(msg =>
       msg.role === "action" && msg.id === id
@@ -1618,7 +1551,7 @@ export default function JarvisInterface() {
     }
   }, [speak]);
 
-  /* ---------- Voice input: push-to-talk → local whisper-cpp via server ---------- */
+  // Voice input.
   const pttHeldRef = useRef(false);
 
   const stopListening = useCallback(() => {
@@ -1630,7 +1563,7 @@ export default function JarvisInterface() {
     if (listeningRef.current || pttHeldRef.current) return;
     pttHeldRef.current = true;
 
-    // Interrupt JARVIS immediately so the mic picks up clean audio
+    // Stop speech first.
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
@@ -1640,7 +1573,7 @@ export default function JarvisInterface() {
     window.speechSynthesis?.cancel();
 
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      // Released before the mic was ready (quick tap) — abort cleanly
+      // Quick tap.
       if (!pttHeldRef.current) {
         stream.getTracks().forEach(t => t.stop());
         return;
@@ -1704,14 +1637,14 @@ export default function JarvisInterface() {
     });
   }, [send]);
 
-  /* Keep stable refs for use in callbacks */
+  // Stable callback refs.
   startListeningRef.current = startListening;
   stopListeningRef.current = stopListening;
 
   const mono = "'Share Tech Mono', monospace";
   const display = "'Orbitron', sans-serif";
 
-  /* ---------- Boot screen ---------- */
+  // Boot screen
   if (!booted) {
     return (
       <div style={{
@@ -1823,7 +1756,7 @@ export default function JarvisInterface() {
     );
   }
 
-  /* ---------- Main HUD ---------- */
+  // Main HUD
   return (
     <div data-root="true" style={{
       height: "100vh",
@@ -1832,8 +1765,6 @@ export default function JarvisInterface() {
       display: "flex", flexDirection: "column",
     }}>
       <style>{FONTS}</style>
-
-      {/* grid + scanline atmosphere */}
       <div aria-hidden style={{
         position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.5,
         backgroundImage: `linear-gradient(${CYAN}0d 1px, transparent 1px), linear-gradient(90deg, ${CYAN}0d 1px, transparent 1px)`,
@@ -1845,8 +1776,6 @@ export default function JarvisInterface() {
         animation: "scanline 9s linear infinite",
       }} />
       <Brackets />
-
-      {/* Header */}
       <header style={{
         display: "flex", justifyContent: "space-between", alignItems: "center",
         padding: "26px 40px 10px",
@@ -1964,7 +1893,6 @@ export default function JarvisInterface() {
           >
             ☑ TASKS {tasks.filter(t => !t.done).length > 0 && <span style={{ fontSize: 8, opacity: 0.7 }}>({tasks.filter(t => !t.done).length})</span>}
           </button>
-          {/* Only rendered when freellmapi is detected running */}
           {freeLLMAvailable && (
             <button
               onClick={() => setFreeLLMActive(a => !a)}
@@ -2036,8 +1964,6 @@ export default function JarvisInterface() {
           </div>
         </div>
       </header>
-
-      {/* Cloud fallback alert — unmissable when local core is bypassed */}
       {aiStatus.fallback && (
         <div role="alert" style={{
           maxWidth: 1680, width: "100%", margin: "6px auto 0",
@@ -2058,15 +1984,12 @@ export default function JarvisInterface() {
           </div>
         </div>
       )}
-
-      {/* Body */}
       <main style={{
         flex: 1, display: "grid", gap: 24, padding: "10px 40px 16px",
         gridTemplateColumns: "minmax(160px, 210px) 1fr minmax(300px, 460px)",
         alignItems: "stretch", minHeight: 0,
         maxWidth: 1680, width: "100%", margin: "0 auto",
       }}>
-        {/* Telemetry */}
         <section style={{
           alignSelf: "center",
           border: `1px solid ${CYAN}33`, padding: "20px 18px",
@@ -2131,13 +2054,9 @@ export default function JarvisInterface() {
             </span>
           </div>
         </section>
-
-        {/* Reactor core */}
         <section style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
           <ReactorCore state={coreState} amplitude={amplitude} />
         </section>
-
-        {/* Conversation */}
         <section style={{
           display: "flex", flexDirection: "column", minHeight: 0,
           border: `1px solid ${CYAN}33`, background: "#06141Fcc",
@@ -2226,8 +2145,6 @@ export default function JarvisInterface() {
           </div>
         </section>
       </main>
-
-      {/* Command line */}
       <footer style={{ padding: "0 40px 30px", maxWidth: 1680, width: "100%", margin: "0 auto" }}>
         <div style={{
           display: "flex", alignItems: "center", gap: 14,
@@ -2296,8 +2213,6 @@ export default function JarvisInterface() {
           </div>
         )}
       </footer>
-
-      {/* Brain Memory Panel */}
       {memoryPanelOpen && (
         <div style={{
           position: "fixed", top: 0, right: 0, bottom: 0,
@@ -2307,7 +2222,6 @@ export default function JarvisInterface() {
           display: "flex", flexDirection: "column",
           zIndex: 200, animation: "riseIn .2s both",
         }}>
-          {/* Panel header */}
           <div style={{
             padding: "20px 18px 14px",
             borderBottom: `1px solid ${CYAN}22`,
@@ -2349,8 +2263,6 @@ export default function JarvisInterface() {
               </button>
             </div>
           </div>
-
-          {/* Add memory input */}
           <div style={{ padding: "12px 18px", borderBottom: `1px solid ${CYAN}22` }}>
             <div style={{
               display: "flex", gap: 8, alignItems: "center",
@@ -2385,8 +2297,6 @@ export default function JarvisInterface() {
               </button>
             </div>
           </div>
-
-          {/* Memory list */}
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px" }}>
             {memories.length === 0 ? (
               <div style={{
@@ -2450,8 +2360,6 @@ export default function JarvisInterface() {
           </div>
         </div>
       )}
-
-      {/* ── Task list panel ── */}
       {taskPanelOpen && (
         <div style={{
           position: "fixed", top: 0, right: 0, bottom: 0,
@@ -2461,7 +2369,6 @@ export default function JarvisInterface() {
           display: "flex", flexDirection: "column",
           zIndex: 200, animation: "riseIn .2s both",
         }}>
-          {/* Header */}
           <div style={{
             padding: "20px 18px 14px",
             borderBottom: `1px solid ${PRIORITY_COLOR.high}22`,
@@ -2484,8 +2391,6 @@ export default function JarvisInterface() {
               onMouseLeave={e => { e.currentTarget.style.color = PRIORITY_COLOR.high + "99"; e.currentTarget.style.borderColor = PRIORITY_COLOR.high + "44"; }}
             >✕</button>
           </div>
-
-          {/* Add task input */}
           <div style={{ padding: "12px 18px", borderBottom: `1px solid ${PRIORITY_COLOR.high}22` }}>
             <div style={{
               border: `1px solid ${PRIORITY_COLOR.high}33`, background: "#06141F88",
@@ -2516,7 +2421,6 @@ export default function JarvisInterface() {
                   }}
                 >ADD</button>
               </div>
-              {/* Priority selector */}
               <div style={{ display: "flex", gap: 0, borderTop: `1px solid ${PRIORITY_COLOR.high}22` }}>
                 {["high", "medium", "low"].map(p => (
                   <button
@@ -2538,8 +2442,6 @@ export default function JarvisInterface() {
               </div>
             </div>
           </div>
-
-          {/* Task list */}
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px" }}>
             {tasks.length === 0 ? (
               <div style={{
@@ -2565,7 +2467,6 @@ export default function JarvisInterface() {
                   opacity: task.done ? 0.5 : 1,
                   transition: "all .2s",
                 }}>
-                  {/* Checkbox */}
                   <button
                     onClick={() => toggleTask(task.id)}
                     aria-label={task.done ? "Mark incomplete" : "Mark complete"}
@@ -2578,8 +2479,6 @@ export default function JarvisInterface() {
                       borderRadius: 2,
                     }}
                   >{task.done ? "✓" : ""}</button>
-
-                  {/* Title + priority badge */}
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
                       <span style={{
@@ -2601,8 +2500,6 @@ export default function JarvisInterface() {
                       {new Date(task.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}
                     </div>
                   </div>
-
-                  {/* Delete */}
                   <button
                     onClick={() => deleteTask(task.id)}
                     aria-label="Delete task"
@@ -2620,8 +2517,6 @@ export default function JarvisInterface() {
           </div>
         </div>
       )}
-
-      {/* Responsive: stack on narrow screens */}
       <style>{`
         @media (max-width: 860px) {
           /* Let the page grow & scroll when panels stack vertically */

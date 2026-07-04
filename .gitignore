@@ -1,0 +1,67 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+dist-ssr/
+dist-electron/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Runtime data and local databases
+data/
+server/data/
+**/server/data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+
+# Local app and tool settings
+.DS_Store
+**/.DS_Store
+.claude/
+.codex/
+.agents/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Package manager caches
+.npm/
+.pnpm-store/
+.yarn/
+!.yarn/releases/
+!.yarn/plugins/
+!.yarn/sdks/
+!.yarn/versions/
+
+# Electron packaging artifacts
+*.dmg
+*.exe
+*.AppImage
+*.snap
+*.deb
+*.rpm
+*.blockmap
+
+# FreeLLMAPI local/private deployment files
+freellmapi/
+freellmapi/deploy-pi.sh
+freellmapi/update-hermes.sh
+freellmapi/monetization/

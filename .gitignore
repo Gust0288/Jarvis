@@ -65,3 +65,5 @@ freellmapi/
 freellmapi/deploy-pi.sh
 freellmapi/update-hermes.sh
 freellmapi/monetization/
+
+SETUP.md

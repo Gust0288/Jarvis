@@ -2,7 +2,7 @@
 
 JARVIS is a local-first desktop AI assistant for macOS. The main app is a React/Vite holographic-style interface backed by a local Node server that talks to Ollama and can use macOS tools such as Calendar, Notes, app launching, weather, web search, and news.
 
-JARVIS can also use `freellmapi`, an optional OpenAI-compatible proxy that routes requests across configured free-tier LLM providers. Keep `freellmapi` as a separate local checkout; this repository ignores it so provider keys, databases, and its own project history do not get mixed into the public Jarvis repo.
+JARVIS can also use `freellmapi`, an optional OpenAI-compatible proxy that routes requests across configured free-tier LLM providers. Keep `freellmapi` as a separate local checkout; this repository ignores it so provider keys, databases, and its own project history do not get mixed into my public Jarvis repo.
 
 ## Project Structure
 
